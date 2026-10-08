@@ -13,6 +13,12 @@ NUCTL_VERSION = "1.13.0"
 def main():
     print(f"\n[SYSTEM] Initializing State Synchronization Module...")
     os.makedirs(MODELS_DIR, exist_ok=True)
+    
+    # Pre-build environments regardless of payloads
+    print("[SYSTEM] Initializing State Synchronization Module...")
+    prepare_base_image()
+    prepare_deployer_image()
+
     local_files = glob.glob(os.path.join(MODELS_DIR, "*.onnx"))
     local_models = {sanitize_name(f): f for f in local_files}
     print(f"[SYSTEM] Scanned local armory: {len(local_models)} payload(s) detected.")
@@ -40,12 +46,6 @@ def main():
     if to_deploy:
         print(f"[SYSTEM] {len(to_deploy)} new payload(s) detected. Engaging launch protocol...")
         
-        # 1. Prepare Base Image (Only takes time ONCE)
-        prepare_base_image()
-        
-        # 2. Prepare Deployer Image (Only takes time ONCE)
-        prepare_deployer_image()
-
         if os.path.exists(BUILD_DIR):
             shutil.rmtree(BUILD_DIR)
         os.makedirs(BUILD_DIR)
