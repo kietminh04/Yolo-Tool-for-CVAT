@@ -181,7 +181,8 @@ RUN wget -qO /usr/local/bin/nuctl https://github.com/nuclio/nuclio/releases/down
     try:
         r = subprocess.run('docker image inspect gcr.io/iguazio/alpine:3.17', shell=True, capture_output=True, encoding='utf-8')
         if r.returncode != 0:
-            subprocess.run('docker tag gcr.io/iguazio/alpine:3.20 gcr.io/iguazio/alpine:3.17', shell=True, capture_output=True, encoding='utf-8')
+            subprocess.run('docker pull alpine:3.17', shell=True)
+            subprocess.run('docker tag alpine:3.17 gcr.io/iguazio/alpine:3.17', shell=True)
     except Exception:
         pass
 
