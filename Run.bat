@@ -9,6 +9,5 @@ if %errorlevel% neq 0 (
     echo.
     echo   [FATAL] Script encountered an error!
 )
-goto :eof
 echo.
-timeout /t 5 /nobreak >nul
+pause
