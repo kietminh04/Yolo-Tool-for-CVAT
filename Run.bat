@@ -8,6 +8,9 @@ python "Run.py"
 if %errorlevel% neq 0 (
     echo.
     echo   [FATAL] Script encountered an error!
+    echo.
+    pause
+) else (
+    echo.
+    timeout /t 5
 )
-echo.
-pause
