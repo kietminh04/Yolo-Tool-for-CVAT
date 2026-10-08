@@ -39,8 +39,6 @@ def main():
         
     if to_deploy:
         print(f"[SYSTEM] {len(to_deploy)} new payload(s) detected. Engaging launch protocol...")
-        if not os.path.exists(TORCH_WHEEL_PATH):
-            sys.exit(1)
         
         # 1. Prepare Base Image (Only takes time ONCE)
         prepare_base_image()
@@ -154,11 +152,16 @@ def prepare_base_image():
     if r.returncode == 0:
         return
     print("[SYSTEM] Assembling foundational matrix (cvat-yolo-base). ETA: 3 mins (One-time operation)...")
+    
+    if os.path.exists(TORCH_WHEEL_PATH):
+        torch_install = f"COPY {TORCH_WHEEL_NAME} /tmp/\nRUN pip3 install --no-cache-dir /tmp/{TORCH_WHEEL_NAME} && rm /tmp/{TORCH_WHEEL_NAME}"
+    else:
+        torch_install = "RUN pip3 install --no-cache-dir torch==2.1.2+cpu -f https://download.pytorch.org/whl/torch_stable.html"
+        
     dockerfile = f"""FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 python3 python3-pip python-is-python3 && rm -rf /var/lib/apt/lists/*
-COPY {TORCH_WHEEL_NAME} /tmp/
-RUN pip3 install --no-cache-dir /tmp/{TORCH_WHEEL_NAME} && rm /tmp/{TORCH_WHEEL_NAME}
+{torch_install}
 RUN pip3 install --no-cache-dir ultralytics opencv-python-headless --extra-index-url https://download.pytorch.org/whl/cpu
 """
     tmp_dir = os.path.join(BASE_DIR, ".base_build")
