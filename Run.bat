@@ -5,7 +5,10 @@ echo.
 echo   [INIT] Booting automated forge sequence...
 echo.
 python "Run.py"
-echo   [FATAL] Missing core module (.py not found)!
-:end
+if %errorlevel% neq 0 (
+    echo.
+    echo   [FATAL] Script encountered an error!
+)
+goto :eof
 echo.
 timeout /t 5 /nobreak >nul
