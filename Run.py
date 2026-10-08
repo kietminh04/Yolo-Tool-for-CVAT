@@ -66,6 +66,8 @@ def main():
             sys.exit(1)
             
     print("[SYSTEM] PROTOCOL COMPLETE. RELOAD CVAT INTERFACE.")
+    enable_cvat_serverless()
+    print("[SUCCESS] You can now use the model in CVAT!")
     
     sys.exit(0)
 
@@ -254,6 +256,27 @@ DEPLOY_SH_TEMPLATE = """#!/bin/bash
 nuctl create project cvat --platform local || true
 {deploy_commands}
 """
+
+def enable_cvat_serverless():
+    print("\n[SYSTEM] Checking if CVAT AI/Serverless mode is enabled...")
+    r = subprocess.run('docker inspect cvat_server', shell=True, capture_output=True, encoding='utf-8')
+    if r.returncode != 0:
+        print("  [-] CVAT is not running. Please start CVAT manually first.")
+        return
+        
+    try:
+        data = json.loads(r.stdout)
+        working_dir = data[0]['Config']['Labels']['com.docker.compose.project.working_dir']
+    except Exception:
+        print("  [-] Could not auto-detect CVAT directory.")
+        return
+        
+    print(f"  [+] Found CVAT installation at: {working_dir}")
+    print("  [+] Injecting Serverless modules and rebooting CVAT (this is safe)...")
+    
+    compose_cmd = 'docker compose -f docker-compose.yml -f components/serverless/docker-compose.serverless.yml up -d'
+    subprocess.run(compose_cmd, shell=True, cwd=working_dir)
+    print("  [+] CVAT AI/Serverless mode is now ONLINE!")
 
 if __name__ == "__main__":
     main()
