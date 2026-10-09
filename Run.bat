@@ -4,11 +4,13 @@ chcp 65001 >nul 2>&1
 echo.
 echo   [INIT] Booting automated forge sequence...
 echo.
-for %%f in (*.py) do (
-    python "%%f"
-    goto :end
+python "Run.py"
+if %errorlevel% neq 0 (
+    echo.
+    echo   [FATAL] Script encountered an error!
+    echo.
+    pause
+) else (
+    echo.
+    timeout /t 5
 )
-echo   [FATAL] Missing core module (.py not found)!
-:end
-echo.
-timeout /t 5 /nobreak >nul

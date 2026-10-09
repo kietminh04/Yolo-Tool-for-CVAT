@@ -77,8 +77,9 @@ def main():
     print(f"[SYSTEM] Pinging Nuclio orchestrator...")
     deployed = get_deployed_functions()
     
-    to_delete = set(deployed.keys()) - set(local_models.keys())
-    to_deploy = set(local_models.keys()) - set(deployed.keys())
+    unhealthy_funcs = {k for k, v in deployed.items() if v != 'ready'}
+    to_delete = (set(deployed.keys()) - set(local_models.keys())) | unhealthy_funcs
+    to_deploy = set(local_models.keys()) - (set(deployed.keys()) - unhealthy_funcs)
     
     if not to_delete and not to_deploy:
         print("[SYSTEM] 100% SYNC ALIGNED. No mutations detected. Terminating...")
@@ -146,7 +147,8 @@ def extract_labels(model_path):
     try:
         from ultralytics import YOLO
         m = YOLO(model_path)
-        return [{"id": k, "name": v, "type": "rectangle"} for k, v in m.names.items()]
+        shape_type = "polygon" if getattr(m, 'task', 'detect') == 'segment' else "rectangle"
+        return [{"id": k, "name": v, "type": shape_type} for k, v in m.names.items()]
     except Exception as e:
         print(f"[WARNING] YOLO extraction failed: {e}")
     try:
@@ -155,7 +157,8 @@ def extract_labels(model_path):
         if isinstance(ckpt, dict):
             obj = ckpt.get('model') or ckpt.get('ema')
             if obj and hasattr(obj, 'names'):
-                return [{"id": k, "name": v, "type": "rectangle"} for k, v in obj.names.items()]
+                shape_type = "polygon" if getattr(obj, 'task', 'detect') == 'segment' else "rectangle"
+                return [{"id": k, "name": v, "type": shape_type} for k, v in obj.names.items()]
     except Exception as e:
         print(f"[WARNING] Torch extraction failed: {e}")
     return [{"id": 0, "name": "object", "type": "rectangle"}]
@@ -304,12 +307,29 @@ def handler(context, event):
         # Sahi applies thresholding during prediction but just to be safe:
         if conf < threshold: continue
             
-        detections.append({
-            "confidence": str(conf),
-            "label": context.user_data.names.get(cls_id, f"class_{cls_id}"),
-            "points": [b[0], b[1], b[2], b[3]],
-            "type": "rectangle",
-        })
+        if getattr(pred, "mask", None) is not None:
+            # Mask is available (Segmentation Model)
+            polygons = pred.mask.to_coco_segmentation()
+            if not polygons:
+                continue
+            # CVAT expects a flat list [x1, y1, x2, y2...] for one polygon
+            # Take the largest polygon to avoid complex multi-polygon shapes
+            largest_poly = max(polygons, key=len)
+            detections.append({
+                "confidence": str(conf),
+                "label": context.user_data.names.get(cls_id, f"class_{cls_id}"),
+                "points": largest_poly,
+                "type": "polygon",
+            })
+        else:
+            # Fallback to bounding box (Detection Model)
+            b = pred.bbox.to_xyxy()
+            detections.append({
+                "confidence": str(conf),
+                "label": context.user_data.names.get(cls_id, f"class_{cls_id}"),
+                "points": [b[0], b[1], b[2], b[3]],
+                "type": "rectangle",
+            })
         
     return context.Response(body=json.dumps(detections), headers={},
                             content_type="application/json", status_code=200)
