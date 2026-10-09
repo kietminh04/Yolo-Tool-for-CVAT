@@ -4,13 +4,64 @@ import os, sys, subprocess, shutil, json, glob, re, time
 sys.stdout.reconfigure(encoding='utf-8')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR = os.path.join(BASE_DIR, "models")
+MODELS_DIR = os.path.join(os.path.dirname(BASE_DIR), "Weights")
 BUILD_DIR = os.path.join(BASE_DIR, ".build")
 TORCH_WHEEL_NAME = "torch-2.1.2+cpu-cp310-cp310-linux_x86_64.whl"
 TORCH_WHEEL_PATH = os.path.join(BASE_DIR, TORCH_WHEEL_NAME)
 NUCTL_VERSION = "1.13.0"
 
+def _check_dll_error(e):
+    if "WinError 126" in str(e) or "c10.dll" in str(e):
+        print("\n" + "="*60)
+        print(" [FATAL ERROR] THIEU MICROSOFT VISUAL C++ REDISTRIBUTABLE!")
+        print("="*60)
+        print(" May tinh chua cai dat loi C++ cua Windows.")
+        print(" Tool dang tu dong tai va cai dat (File: vc_redist.x64.exe)...")
+        
+        import urllib.request
+        import tempfile
+        import sys, subprocess, os
+        
+        installer_path = os.path.join(tempfile.gettempdir(), "vc_redist.x64.exe")
+        try:
+            urllib.request.urlretrieve("https://aka.ms/vs/17/release/vc_redist.x64.exe", installer_path)
+            print(" -> Tai xong! Dang goi trinh cai dat...")
+            print(" -> LUU Y: NEU CO BANG THONG BAO (UAC) HIEN LEN, HAY BAM 'YES' DE CHO PHEP CAI DAT!")
+            
+            subprocess.run([installer_path, "/install", "/quiet", "/norestart"], check=True)
+            
+            print("\n[SUCCESS] Da cai dat xong C++ Redistributable!")
+            print("[!] Vui long TAT CUA SO NAY VA CHAY LAI FILE Run.bat de tiep tuc.")
+            sys.exit(0)
+        except Exception as ex:
+            print(f"\n[ERROR] Tu dong cai dat that bai: {ex}")
+            print(" -> Vui long tu tai va cai dat thu cong tai: https://aka.ms/vs/17/release/vc_redist.x64.exe")
+            sys.exit(1)
+    else:
+        raise e
+
+def ensure_host_dependencies():
+    print("[SYSTEM] Checking local host environment dependencies...")
+    import sys, subprocess
+    try:
+        import ultralytics
+        import onnx
+        import onnxruntime
+    except OSError as e:
+        _check_dll_error(e)
+    except ImportError:
+        print("  [!] Missing required host libraries (ultralytics, onnx).")
+        print("  [+] Auto-installing now. This may take a moment...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "ultralytics", "onnx", "onnxruntime"], check=False)
+        print("  [+] Auto-install complete!")
+        
+        try:
+            import torch
+        except OSError as e:
+            _check_dll_error(e)
+
 def main():
+    ensure_host_dependencies()
     print(f"\n[SYSTEM] Initializing State Synchronization Module...")
     os.makedirs(MODELS_DIR, exist_ok=True)
     
@@ -84,7 +135,7 @@ def delete_function(name):
 
 def scan_models():
     os.makedirs(MODELS_DIR, exist_ok=True)
-    return sorted(glob.glob(os.path.join(MODELS_DIR, "*.pt")))
+    return sorted(glob.glob(os.path.join(MODELS_DIR, "*.onnx")))
 
 def sanitize_name(filepath):
     name = os.path.splitext(os.path.basename(filepath))[0]
@@ -96,8 +147,8 @@ def extract_labels(model_path):
         from ultralytics import YOLO
         m = YOLO(model_path)
         return [{"id": k, "name": v, "type": "rectangle"} for k, v in m.names.items()]
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARNING] YOLO extraction failed: {e}")
     return [{"id": 0, "name": "object", "type": "rectangle"}]
 
 def prepare_build(model_path, func_name):
@@ -141,10 +192,10 @@ def run_docker():
     return proc.returncode == 0
 
 def prepare_base_image():
-    r = subprocess.run('docker image inspect cvat-onnx-base', shell=True, capture_output=True, encoding='utf-8')
+    r = subprocess.run('docker image inspect cvat-onnx-sahi-base', shell=True, capture_output=True, encoding='utf-8')
     if r.returncode == 0:
         return
-    print("[SYSTEM] Assembling foundational matrix (cvat-onnx-base). ETA: 3 mins (One-time operation)...")
+    print("[SYSTEM] Assembling foundational matrix (cvat-onnx-sahi-base). ETA: 3 mins (One-time operation)...")
     
     if os.path.exists(TORCH_WHEEL_PATH):
         torch_install = f"COPY {TORCH_WHEEL_NAME} /tmp/\nRUN pip3 install --no-cache-dir /tmp/{TORCH_WHEEL_NAME} && rm /tmp/{TORCH_WHEEL_NAME}"
@@ -155,13 +206,14 @@ def prepare_base_image():
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 python3 python3-pip python-is-python3 && rm -rf /var/lib/apt/lists/*
 {torch_install}
-RUN pip3 install --no-cache-dir ultralytics opencv-python-headless onnxruntime --extra-index-url https://download.pytorch.org/whl/cpu
+RUN pip3 install --no-cache-dir ultralytics opencv-python-headless onnxruntime sahi --extra-index-url https://download.pytorch.org/whl/cpu
 """
     tmp_dir = os.path.join(BASE_DIR, ".base_build")
     os.makedirs(tmp_dir, exist_ok=True)
     write_file(os.path.join(tmp_dir, "Dockerfile"), dockerfile)
-    shutil.copy(TORCH_WHEEL_PATH, os.path.join(tmp_dir, TORCH_WHEEL_NAME))
-    subprocess.run(f'docker build -t cvat-yolo-base "{tmp_dir}"', shell=True)
+    if os.path.exists(TORCH_WHEEL_PATH):
+        shutil.copy(TORCH_WHEEL_PATH, os.path.join(tmp_dir, TORCH_WHEEL_NAME))
+    subprocess.run(f'docker build -t cvat-onnx-sahi-base "{tmp_dir}"', shell=True)
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
 def prepare_deployer_image():
@@ -196,31 +248,59 @@ def write_file(path, content, newline=None):
 MAIN_PY_TEMPLATE = r'''import json, base64, io
 from PIL import Image
 from ultralytics import YOLO
+from sahi import AutoDetectionModel
+from sahi.predict import get_sliced_prediction
 
 def init_context(context):
-    model = YOLO("/opt/nuclio/best.onnx")
-    context.user_data.model = model
-    context.user_data.names = model.names
+    model_path = "/opt/nuclio/best.onnx"
+    # Load YOLO natively to extract names
+    model_yolo = YOLO(model_path, task='detect')
+    context.user_data.names = model_yolo.names
+    
+    # Load SAHI wrapped model
+    detection_model = AutoDetectionModel.from_pretrained(
+        model_type='yolov8',
+        model_path=model_path,
+        confidence_threshold=0.1,
+        device="cpu"
+    )
+    context.user_data.model = detection_model
 
 def handler(context, event):
     data = event.body
     buf = io.BytesIO(base64.b64decode(data["image"]))
     image = Image.open(buf).convert("RGB")
     threshold = float(data.get("threshold", 0.1))
-    results = context.user_data.model(image, verbose=False)
+    
+    # Update threshold dynamically
+    context.user_data.model.confidence_threshold = threshold
+    
+    # Execute SAHI slicing
+    result = get_sliced_prediction(
+        image,
+        context.user_data.model,
+        slice_height=640,
+        slice_width=640,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+        verbose=False
+    )
+    
     detections = []
-    for r in results:
-        for box in r.boxes:
-            conf = float(box.conf[0])
-            if conf < threshold: continue
-            b = box.xyxy[0].tolist()
-            cls_id = int(box.cls[0])
-            detections.append({
-                "confidence": str(conf),
-                "label": context.user_data.names.get(cls_id, f"class_{cls_id}"),
-                "points": [b[0], b[1], b[2], b[3]],
-                "type": "rectangle",
-            })
+    for pred in result.object_prediction_list:
+        b = pred.bbox.to_xyxy()
+        cls_id = int(pred.category.id)
+        conf = float(pred.score.value)
+        
+        if conf < threshold: continue
+            
+        detections.append({
+            "confidence": str(conf),
+            "label": context.user_data.names.get(cls_id, f"class_{cls_id}"),
+            "points": [b[0], b[1], b[2], b[3]],
+            "type": "rectangle",
+        })
+        
     return context.Response(body=json.dumps(detections), headers={},
                             content_type="application/json", status_code=200)
 '''
@@ -242,7 +322,7 @@ spec:
   eventTimeout: 30s
   build:
     image: cvat.serverless.{func_name}
-    baseImage: cvat-onnx-base
+    baseImage: cvat-onnx-sahi-base
   triggers:
     myHttpTrigger:
       numWorkers: 1
@@ -275,8 +355,21 @@ def enable_cvat_serverless():
     print("  [+] Injecting Serverless modules and rebooting CVAT (this is safe)...")
     
     compose_cmd = 'docker compose -f docker-compose.yml -f components/serverless/docker-compose.serverless.yml up -d'
-    subprocess.run(compose_cmd, shell=True, cwd=working_dir)
-    print("  [+] CVAT AI/Serverless mode is now ONLINE!")
+    
+    try:
+        # Tự động phát hiện nếu đang chạy trên Windows nhưng đường dẫn lại là của Linux (WSL)
+        if sys.platform == 'win32' and working_dir.startswith('/'):
+            print(f"  [!] Phát hiện môi trường WSL ({working_dir}). Đang chuyển đổi lệnh sang WSL...")
+            # Dùng WSL để cd vào đường dẫn Linux và chạy lệnh docker
+            wsl_cmd = f'wsl -- bash -c "cd {working_dir} && {compose_cmd}"'
+            subprocess.run(wsl_cmd, shell=True)
+            print("  [+] CVAT AI/Serverless mode is now ONLINE!")
+        else:
+            # Chạy bình thường nếu đường dẫn cùng hệ điều hành
+            subprocess.run(compose_cmd, shell=True, cwd=working_dir)
+            print("  [+] CVAT AI/Serverless mode is now ONLINE!")
+    except Exception as e:
+        print(f"\n  [ERROR] Failed to run docker compose in {working_dir}: {e}")
 
 if __name__ == "__main__":
     main()
