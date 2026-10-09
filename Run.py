@@ -4,7 +4,7 @@ import os, sys, subprocess, shutil, json, glob, re, time
 sys.stdout.reconfigure(encoding='utf-8')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR = os.path.join(os.path.dirname(BASE_DIR), "Weights")
+MODELS_DIR = os.path.join(BASE_DIR, "models")
 BUILD_DIR = os.path.join(BASE_DIR, ".build")
 TORCH_WHEEL_NAME = "torch-2.1.2+cpu-cp310-cp310-linux_x86_64.whl"
 TORCH_WHEEL_PATH = os.path.join(BASE_DIR, TORCH_WHEEL_NAME)
